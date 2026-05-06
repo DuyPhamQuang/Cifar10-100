@@ -1,0 +1,9 @@
+matplotlib
+papermill
+timm
+wandb
+numpy
+pandas
+jupyter
+torch
+torchvision
