@@ -23,7 +23,7 @@ from torchvision import transforms
 from torchvision import datasets
 from torch.utils.data.sampler import SubsetRandomSampler
 
-from models.resnet_cifar10 import ResNet
+from models.resnet_cifar import ResNet
 from data_loader import get_data_loaders, plot_images
 from trainer import train_one_epoch, evaluate
 from utils import save_checkpoint, load_checkpoint, plot_history, plot_accuracy
@@ -34,7 +34,7 @@ parser.add_argument('--lr', default=1e-4, type=float, help='learning rate')
 parser.add_argument('--batch_size', default=64, type=int, help='batch size')
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
 parser.add_argument('--weight_decay', default=5e-4, type=float, help='weight decay')
-parser.add_argument('--milestone', nargs='+', default=[82, 123], type=int, help='milestones for MultiStepLR')
+parser.add_argument('--milestone', nargs='+', default=[60, 120, 160], type=int, help='milestones for MultiStepLR')
 parser.add_argument('--gamma', default=0.1, type=float, help='gamma for MultiStepLR')
 parser.add_argument('--optimizer', default="adam")
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
@@ -73,8 +73,8 @@ if args.model == "vit_timm":
     print(f"Batch Size for ViT_Timm: {batch_size}\n")
 
 # Paths
-results_path = 'results/Resnet' if args.model in ["resnet20", "resnet32", "resnet44", "resnet56"] \
-                                else f'results/{args.model}'
+results_path = f'results/Resnet/{args.datadir}' if args.model in ["resnet20", "resnet32", "resnet44", "resnet56"] \
+                                else f'results/{args.model}/{args.datadir}'
 os.makedirs(results_path, exist_ok=True)
 
 checkpoint_path = os.path.join(results_path, f'best_model_{args.model}.pth')
