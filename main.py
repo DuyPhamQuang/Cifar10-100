@@ -73,8 +73,8 @@ if args.model == "vit_timm":
     print(f"Batch Size for ViT_Timm: {batch_size}\n")
 
 # Paths
-results_path = f'results/Resnet/{args.datadir}' if args.model in ["resnet20", "resnet32", "resnet44", "resnet56"] \
-                                else f'results/{args.model}/{args.datadir}'
+results_path = f'results/Resnet/{args.dataset}' if args.model in ["resnet20", "resnet32", "resnet44", "resnet56"] \
+                                else f'results/{args.model}/{args.dataset}'
 os.makedirs(results_path, exist_ok=True)
 
 checkpoint_path = os.path.join(results_path, f'best_model_{args.model}.pth')
