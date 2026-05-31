@@ -61,11 +61,22 @@ weight_decay = args.weight_decay
 milestone = args.milestone
 gamma = args.gamma
 
-if args.model == "vit_timm":
-    print("For fine-tuning ViT, these default hyperparameters will be used:")
+if args.model == "vit_timm" and args.dataset == "cifar10":   
+    print("For fine-tuning ViT on Cifar10, these default hyperparameters will be used:")
     lr = 1e-4
     weight_decay = 5e-4
     epochs = 12
+    batch_size = 64
+    print(f"Learning Rate for ViT_Timm: {lr}\n")
+    print(f"Weight Decay for ViT_Timm: {weight_decay}\n")
+    print(f"Epochs for ViT_Timm: {epochs}\n")
+    print(f"Batch Size for ViT_Timm: {batch_size}\n")
+
+if args.model == "vit_timm" and args.dataset == "cifar100":
+    print("For fine-tuning ViT on Cifar100, these default hyperparameters will be used:")
+    lr = 1e-4
+    weight_decay = 1e-3
+    epochs = 20
     batch_size = 64
     print(f"Learning Rate for ViT_Timm: {lr}\n")
     print(f"Weight Decay for ViT_Timm: {weight_decay}\n")
@@ -284,5 +295,7 @@ print(f"Best checkpoint    : {checkpoint_path}\n")
 plot_history(
     history,
     milestones=milestone if args.model in ["resnet20", "resnet32", "resnet44", "resnet56"] else None,
-    save_path = os.path.join(results_path, f'training_curves_{args.model}.png') 
+    save_path = os.path.join(results_path, f'training_curves_{args.model}.png'),
+    model_name=args.model,
+    dataset_name=args.dataset
 )

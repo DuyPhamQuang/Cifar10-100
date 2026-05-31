@@ -65,7 +65,7 @@ def load_checkpoint(model, optimizer, load_path, device):
 
 
 
-def plot_history(history, milestones=None, save_path='./results/training_curves.png'):
+def plot_history(history, milestones=None, save_path='./results/training_curves.png', model_name=None, dataset_name=None):
     """
     Plots accuracy, loss, and learning rate curves from a training history dict.
     Saves the figure to disk.
@@ -82,7 +82,7 @@ def plot_history(history, milestones=None, save_path='./results/training_curves.
     epochs = range(1, len(history['train_loss']) + 1)
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-    fig.suptitle('ResNet CIFAR-10 — Training Curves', fontsize=14, y=1.01)
+    fig.suptitle(f'{model_name} — {dataset_name}', fontsize=14, y=1.01)
 
     # ── Accuracy ──────────────────────────────────────────────────────────────
     axes[0].plot(epochs, history['train_acc'], label='Train')
