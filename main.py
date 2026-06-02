@@ -38,7 +38,7 @@ parser.add_argument('--milestone', nargs='+', default=[60, 120, 160], type=int, 
 parser.add_argument('--gamma', default=0.1, type=float, help='gamma for MultiStepLR')
 parser.add_argument('--optimizer', default="adam")
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
-parser.add_argument('--model', default='vit')
+parser.add_argument('--model', default='vit_timm')
 parser.add_argument('--image_size', default=32, type=int)
 parser.add_argument('--epochs', type=int, default=10)
 parser.add_argument('--patch', default=4, type=int)
