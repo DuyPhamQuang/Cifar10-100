@@ -24,6 +24,7 @@ from torchvision import datasets
 from torch.utils.data.sampler import SubsetRandomSampler
 
 from models.resnet_cifar import ResNet
+from models.vit import VisionTransformer
 from data_loader import get_data_loaders, plot_images
 from trainer import train_one_epoch, evaluate
 from utils import save_checkpoint, load_checkpoint, plot_history, plot_accuracy
@@ -41,7 +42,7 @@ parser.add_argument('--resume', '-r', action='store_true', help='resume from che
 parser.add_argument('--model', default='vit_timm')
 parser.add_argument('--image_size', default=32, type=int)
 parser.add_argument('--epochs', type=int, default=10)
-parser.add_argument('--patch', default=4, type=int)
+parser.add_argument('--patch_size', default=4, type=int)
 parser.add_argument('--datadir', default='data/cifar10', type=str, help='dataset to use (cifar10 or cifar100)')
 parser.add_argument('--dataset', default='cifar10', type=str, help='dataset to use (cifar10 or cifar100)')
 
@@ -82,6 +83,34 @@ if args.model == "vit_timm" and args.dataset == "cifar100":
     print(f"Weight Decay for ViT_Timm: {weight_decay}\n")
     print(f"Epochs for ViT_Timm: {epochs}\n")
     print(f"Batch Size for ViT_Timm: {batch_size}\n")
+
+if args.model == "vit" and args.dataset == "cifar10":
+    print("For fine-tuning ViT on Cifar10, these default hyperparameters will be used:")
+    input_channels = 3
+    patch_size = 4
+    embedding_dim = 768 
+    num_heads = 12
+    mlp_hidden_dim = 3072
+    num_blocks = 12
+    drop_out=0.1
+    lr = 3e-4
+    weight_decay = 5e-5
+    epochs = 200
+    batch_size = 128
+
+if args.model == "vit" and args.dataset == "cifar100":
+    print("For fine-tuning ViT on Cifar100, these default hyperparameters will be used:")
+    input_channels = 3
+    patch_size = 4
+    embedding_dim = 768 
+    num_heads = 12
+    mlp_hidden_dim = 3072
+    num_blocks = 12
+    drop_out=0.1
+    lr = 3e-4
+    weight_decay = 5e-4
+    epochs = 200
+    batch_size = 128
 
 # Paths
 results_path = f'results/Resnet/{args.dataset}' if args.model in ["resnet20", "resnet32", "resnet44", "resnet56"] \
@@ -189,6 +218,19 @@ elif args.model=="vit_timm":
     model.head = nn.Linear(model.head.in_features, num_classes)
     model = model.to(device)
     print(f"Using ViT (timm pretrained on ImageNet)")
+elif args.model=="vit":
+    model = VisionTransformer(
+        input_channels=input_channels,
+        embedding_dim=embedding_dim,
+        patch_size=patch_size,
+        image_size=image_size,
+        num_heads=num_heads,
+        mlp_hidden_dim=mlp_hidden_dim,
+        num_blocks=num_blocks,
+        num_classes=num_classes,
+        dropout=drop_out
+    ).to(device)
+    print(f"Using ViT_base (from scratch)")
 else:
     raise ValueError(f"'{args.model}' is not a valid model")
 
@@ -211,7 +253,7 @@ else:
 #     start_epoch = checkpoint['epoch']
 
 # Loss is CE
-criterion = nn.CrossEntropyLoss()
+criterion = nn.CrossEntropyLoss() # Already includes softmax, so outputs can be raw logits
 
 # Optimizer
 if args.model in ["resnet20", "resnet32", "resnet44", "resnet56"]:
@@ -222,7 +264,7 @@ if args.model in ["resnet20", "resnet32", "resnet44", "resnet56"]:
         weight_decay = weight_decay,
         nesterov = True
     )
-elif args.model == "vit_timm":
+elif args.model == "vit_timm" or args.model == "vit":
     optimizer = optim.Adam(
         model.parameters(),
         lr = lr,
@@ -235,7 +277,7 @@ else:
 # Scheduler
 if args.model in ["resnet20", "resnet32", "resnet44", "resnet56"]:
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestone, gamma=gamma)
-elif args.model == "vit_timm":
+elif args.model == "vit_timm" or args.model == "vit":
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
 else:
     raise ValueError(f"'{args.model}' is not a valid model")
