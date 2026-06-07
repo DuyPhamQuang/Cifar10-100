@@ -145,7 +145,7 @@ else:
 # Set up normalization based on the dataset
 if args.dataset == 'cifar10':
     mean = (0.4914, 0.4822, 0.4465)
-    std = (0.2023, 0.1994, 0.2010)
+    std = (0.2470, 0.2435, 0.2616)
     num_classes = 10
 elif args.dataset == 'cifar100':
     mean = (0.5071, 0.4867, 0.4408)
@@ -162,6 +162,27 @@ if args.model == "vit_timm":
 
     train_transform = timm.data.create_transform(**data_config, is_training=True)
     test_transform  = timm.data.create_transform(**data_config, is_training=False)
+
+elif args.model == "vit":
+    if args.dataset == 'cifar100':
+        train_transform = transforms.Compose([
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandAugment(num_ops=2, magnitude=9),
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std)
+        ])
+    else:  # cifar10
+        train_transform = transforms.Compose([
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std),
+        ])
+    test_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean, std),
+    ])
 
 elif args.model in ["resnet20", "resnet32", "resnet44", "resnet56"]:
     size = image_size
