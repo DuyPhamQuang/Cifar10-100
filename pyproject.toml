@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "bayesian-torch>=0.5.0",
     "jupyter>=1.1.1",
     "kornia>=0.8.3",
     "matplotlib>=3.10.8",

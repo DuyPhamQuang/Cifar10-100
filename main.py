@@ -23,7 +23,7 @@ from torchvision import transforms
 from torchvision import datasets
 from torch.utils.data.sampler import SubsetRandomSampler
 
-from models.resnet_cifar import ResNet
+from models.resnet import ResNet
 from models.vit import VisionTransformer
 from data_loader import get_data_loaders, plot_images
 from trainer import train_one_epoch, evaluate
@@ -122,8 +122,8 @@ checkpoint_path = os.path.join(results_path, f'best_model_{args.model}.pth')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
-best_test_acc = 0.0
-
+# best validation accuracy (for best model saving)
+best_val_acc = 0.0
 
 # History (for plotting)
 history = {
