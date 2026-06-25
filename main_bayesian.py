@@ -49,6 +49,7 @@ parser.add_argument('--patch_size', default=4, type=int)
 parser.add_argument('--datadir', default='data/cifar10', type=str, help='dataset to use (cifar10 or cifar100)')
 parser.add_argument('--dataset', default='cifar10', type=str, help='dataset to use (cifar10 or cifar100)')
 
+parser.add_argument('--mode', type=str, required=True, help='train | test')
 parser.add_argument('--num_monte_carlo', type=int, default=20, help='number of Monte Carlo samples to be drawn during inference')
 parser.add_argument('--num_mc', type=int, default=5, help='number of Monte Carlo runs during training')
 parser.add_argument('--tensorboard', type=bool, default=True, help='use tensorboard for logging and visualization ' \
@@ -319,56 +320,58 @@ if args.model in ["resnet20_bayesian", "resnet32_bayesian", "resnet44_bayesian",
 else:
     raise ValueError(f"'{args.model}' is not a valid model")
 
-# Training/Validating Loop
-print(f"Starting training — {epochs} epochs\n")
+if args.mode == "train":
 
-scaler = torch.cuda.amp.GradScaler()
+    # Training/Validating Loop
+    print(f"Starting training — {epochs} epochs\n")
 
-for epoch in range(0, epochs):
+    scaler = torch.cuda.amp.GradScaler()
 
-    train_one_epoch_bayesian(
-        model, train_loader, args.num_mc, criterion, optimizer, epoch, device, scaler, tb_writer
-    )
-    test_acc = validate_bayesian(
-        model, test_loader, args.num_mc, criterion, epoch, device, tb_writer
-    )
+    for epoch in range(0, epochs):
 
-    scheduler.step()
-    current_lr = optimizer.param_groups[0]['lr']
-
-    # # Record
-    # history['train_loss'].append(train_loss)
-    # history['train_acc'].append(train_acc)
-    # history['test_loss'].append(test_loss)
-    # history['test_acc'].append(test_acc)
-    # history['lr'].append(current_lr)
-
-    # print(
-    #     f"Epoch [{epoch:3d}/{epochs}] | LR: {current_lr:.4f} | "
-    #     f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}% | "
-    #     f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.2f}%"
-    # )
-
-    # # Save record to csv file
-    # record_df = pd.DataFrame(history)
-    # record_df.to_csv(os.path.join(results_path, f'training_history_{args.model}.csv'), index=False)
-
-    # Save best checkpoint
-    if test_acc > best_test_acc:
-        best_test_acc = test_acc
-        save_checkpoint(
-            state={
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'test_acc': test_acc,
-            },
-            save_path=checkpoint_path
+        train_acc, train_loss = train_one_epoch_bayesian(
+            model, train_loader, args.num_mc, criterion, optimizer, epoch, device, scaler, tb_writer
+        )
+        test_acc, test_loss = validate_bayesian(
+            model, test_loader, args.num_mc, criterion, epoch, device, tb_writer
         )
 
-print(f"\nTraining complete.")
-print(f"Best test accuracy : {best_test_acc:.2f}%")
-print(f"Best checkpoint    : {checkpoint_path}\n")
+        scheduler.step()
+        current_lr = optimizer.param_groups[0]['lr']
+
+        # # Record
+        # history['train_loss'].append(train_loss)
+        # history['train_acc'].append(train_acc)
+        # history['test_loss'].append(test_loss)
+        # history['test_acc'].append(test_acc)
+        # history['lr'].append(current_lr)
+
+        print(
+            f"Epoch [{epoch:3d}/{epochs}] | LR: {current_lr:.4f} | "
+            f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}% | "
+            f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.2f}%"
+        )
+
+        # # Save record to csv file
+        # record_df = pd.DataFrame(history)
+        # record_df.to_csv(os.path.join(results_path, f'training_history_{args.model}.csv'), index=False)
+
+        # Save best checkpoint
+        if test_acc > best_test_acc:
+            best_test_acc = test_acc
+            save_checkpoint(
+                state={
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'test_acc': test_acc,
+                },
+                save_path=checkpoint_path
+            )
+
+    print(f"\nTraining complete.")
+    print(f"Best test accuracy : {best_test_acc:.2f}%")
+    print(f"Best checkpoint    : {checkpoint_path}\n")
 
 # plot_history(
 #     history,
@@ -378,16 +381,18 @@ print(f"Best checkpoint    : {checkpoint_path}\n")
 #     dataset_name=args.dataset
 # )
 
-# Evaluate the best model on the test set
-print(f"Evaluating the best model on the test set ...")
-# Load the best model checkpoint
-if torch.cuda.is_available():
-    checkpoint = torch.load(checkpoint_path)
-else:
-    checkpoint = torch.load(checkpoint_path,
-                            map_location=torch.device('cpu'))
-model.load_state_dict(checkpoint['state_dict'])
-output, labels = evaluate_bayesian(model, test_loader, args.num_monte_carlo)
+if args.mode == "test":
+    # Evaluate the best model on the test set
+    print(f"Evaluating the best model on the test set ...")
+    # Load the best model checkpoint
+    if torch.cuda.is_available():
+        checkpoint = torch.load(checkpoint_path)
+    else:
+        checkpoint = torch.load(checkpoint_path,
+                                map_location=torch.device('cpu'))
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+    output, labels = evaluate_bayesian(model, test_loader, args.num_monte_carlo)
 
-np.save(f'{results_path}/probs_cifar_mc.npy', output.data.cpu().numpy())
-np.save(f'{results_path}/cifar_test_labels_mc.npy', labels.data.cpu().numpy())
+    np.save(f'{results_path}/probs_cifar_mc.npy', output.data.cpu().numpy())
+    np.save(f'{results_path}/cifar_test_labels_mc.npy', labels.data.cpu().numpy())
