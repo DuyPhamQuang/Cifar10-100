@@ -88,28 +88,28 @@ if args.model == "vit" and args.dataset == "cifar10":
     print("For fine-tuning ViT on Cifar10, these default hyperparameters will be used:")
     input_channels = 3
     patch_size = 4
-    embedding_dim = 768 
-    num_heads = 12
-    mlp_hidden_dim = 3072
-    num_blocks = 12
+    embedding_dim = 384 
+    num_heads = 6
+    mlp_hidden_dim = 1536
+    num_blocks = 6
     drop_out=0.1
-    lr = 3e-4
+    lr = 1e-3
     weight_decay = 5e-5
-    epochs = 200
+    epochs = 500
     batch_size = 128
 
 if args.model == "vit" and args.dataset == "cifar100":
     print("For fine-tuning ViT on Cifar100, these default hyperparameters will be used:")
     input_channels = 3
     patch_size = 4
-    embedding_dim = 768 
-    num_heads = 12
-    mlp_hidden_dim = 3072
-    num_blocks = 12
+    embedding_dim = 384 
+    num_heads = 6
+    mlp_hidden_dim = 1536
+    num_blocks = 6
     drop_out=0.1
-    lr = 3e-4
-    weight_decay = 5e-4
-    epochs = 200
+    lr = 1e-3
+    weight_decay = 5e-5
+    epochs = 500
     batch_size = 128
 
 # Paths
@@ -123,7 +123,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
 # best validation accuracy (for best model saving)
-best_val_acc = 0.0
+best_test_acc = 0.0
 
 # History (for plotting)
 history = {
@@ -274,7 +274,10 @@ else:
 #     start_epoch = checkpoint['epoch']
 
 # Loss is CE
-criterion = nn.CrossEntropyLoss() # Already includes softmax, so outputs can be raw logits
+if args.model == "vit" and args.dataset == "cifar100":
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+else:
+    criterion = nn.CrossEntropyLoss()
 
 # Optimizer
 if args.model in ["resnet20", "resnet32", "resnet44", "resnet56"]:
@@ -285,12 +288,17 @@ if args.model in ["resnet20", "resnet32", "resnet44", "resnet56"]:
         weight_decay = weight_decay,
         nesterov = True
     )
-elif args.model == "vit_timm" or args.model == "vit":
+elif args.model == "vit_timm":
     optimizer = optim.Adam(
         model.parameters(),
         lr = lr,
         weight_decay = weight_decay
     )
+elif args.model == "vit":
+    optimizer = optim.AdamW(        
+        model.parameters(),
+        lr = lr,
+        weight_decay = weight_decay)
 else:
     raise ValueError(f"'{args.model}' is not a valid model")
 
@@ -298,8 +306,18 @@ else:
 # Scheduler
 if args.model in ["resnet20", "resnet32", "resnet44", "resnet56"]:
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestone, gamma=gamma)
-elif args.model == "vit_timm" or args.model == "vit":
+elif args.model == "vit_timm":
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
+elif args.model == "vit":
+    warmup_scheduler = optim.lr_scheduler.LinearLR(
+        optimizer, start_factor=1e-3, end_factor=1.0, total_iters=10
+    )
+    cosine_scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=epochs - 10, eta_min=1e-5
+    )
+    scheduler = optim.lr_scheduler.SequentialLR(
+        optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[10]
+    )
 else:
     raise ValueError(f"'{args.model}' is not a valid model")
 
