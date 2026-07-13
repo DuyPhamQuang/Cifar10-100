@@ -6,6 +6,7 @@ from tqdm import tqdm
 
 
 len_testset = 10000
+total_training_samples = 50000
 
 def train_one_epoch(model, train_loader, criterion, optimizer, device, scaler):
     model.train()
@@ -75,7 +76,7 @@ def train_one_epoch_bayesian(model, train_loader, num_mc, criterion, optimizer, 
         output = torch.mean(torch.stack(output_), dim=0)
         kl = torch.mean(torch.stack(kl_), dim=0)
         cross_entropy_loss = criterion(output, labels)
-        scaled_kl = kl / batch_size 
+        scaled_kl = kl / total_training_samples 
         #ELBO loss
         loss = cross_entropy_loss + scaled_kl
 
@@ -138,7 +139,7 @@ def validate_bayesian(model, val_loader, num_mc, criterion, epoch, device, tb_wr
         output = torch.mean(torch.stack(output_), dim=0)
         kl = torch.mean(torch.stack(kl_), dim=0)
         cross_entropy_loss = criterion(output, labels)
-        scaled_kl = kl / batch_size 
+        scaled_kl = kl / total_training_samples
         #ELBO loss
         loss = cross_entropy_loss + scaled_kl
 
