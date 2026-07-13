@@ -51,7 +51,7 @@ parser.add_argument('--dataset', default='cifar10', type=str, help='dataset to u
 
 parser.add_argument('--mode', type=str, required=True, help='train | test')
 parser.add_argument('--num_monte_carlo', type=int, default=20, help='number of Monte Carlo samples to be drawn during inference')
-parser.add_argument('--num_mc', type=int, default=5, help='number of Monte Carlo runs during training')
+parser.add_argument('--num_mc', type=int, default=1, help='number of Monte Carlo runs during training')
 parser.add_argument('--tensorboard', type=bool, default=True, help='use tensorboard for logging and visualization ' \
 'of training progress')
 parser.add_argument( '--log_dir', type=str, default='./logs', help='use tensorboard for logging '
