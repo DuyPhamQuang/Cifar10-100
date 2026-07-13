@@ -274,7 +274,7 @@ else:
 #     start_epoch = checkpoint['epoch']
 
 # Loss is CE
-if args.model == "vit" and args.dataset == "cifar100":
+if args.model == "vit":
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 else:
     criterion = nn.CrossEntropyLoss()
@@ -288,17 +288,17 @@ if args.model in ["resnet20", "resnet32", "resnet44", "resnet56"]:
         weight_decay = weight_decay,
         nesterov = True
     )
-elif args.model == "vit_timm":
+elif args.model == "vit_timm" or args.model == "vit":
     optimizer = optim.Adam(
         model.parameters(),
         lr = lr,
         weight_decay = weight_decay
     )
-elif args.model == "vit":
-    optimizer = optim.AdamW(        
-        model.parameters(),
-        lr = lr,
-        weight_decay = weight_decay)
+# elif args.model == "vit":
+#     optimizer = optim.AdamW(        
+#         model.parameters(),
+#         lr = lr,
+#         weight_decay = weight_decay)
 else:
     raise ValueError(f"'{args.model}' is not a valid model")
 
