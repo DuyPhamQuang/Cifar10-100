@@ -139,7 +139,7 @@ def validate_bayesian(model, val_loader, num_mc, criterion, epoch, device, tb_wr
         output = torch.mean(torch.stack(output_), dim=0)
         kl = torch.mean(torch.stack(kl_), dim=0)
         cross_entropy_loss = criterion(output, labels)
-        scaled_kl = kl / total_training_samples
+        scaled_kl = kl / len_testset
         #ELBO loss
         loss = cross_entropy_loss + scaled_kl
 

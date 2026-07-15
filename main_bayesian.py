@@ -34,7 +34,7 @@ from bayesian_torch.utils.util import get_rho
 
 # parsers
 parser = argparse.ArgumentParser(description='CIFAR10/100 Training')
-parser.add_argument('--lr', default=1e-4, type=float, help='learning rate')
+parser.add_argument('--lr', default=0.001, type=float, help='learning rate')
 parser.add_argument('--batch_size', default=64, type=int, help='batch size')
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
 parser.add_argument('--weight_decay', default=5e-4, type=float, help='weight decay')
@@ -292,13 +292,7 @@ criterion = nn.CrossEntropyLoss() # Already includes softmax, so outputs can be 
 
 # Optimizer
 if args.model in ["resnet20_bayesian", "resnet32_bayesian", "resnet44_bayesian", "resnet56_bayesian"]:
-    optimizer = optim.SGD(
-        model.parameters(),
-        lr = lr,
-        momentum = momentum,
-        weight_decay = weight_decay,
-        nesterov = True
-    )
+    optimizer = torch.optim.Adam(model.parameters(), lr)
 # elif args.model == "vit_timm" or args.model == "vit":
 #     optimizer = optim.Adam(
 #         model.parameters(),
@@ -313,12 +307,12 @@ tb_writer = SummaryWriter(logger_dir)
 
  
 # Scheduler
-if args.model in ["resnet20_bayesian", "resnet32_bayesian", "resnet44_bayesian", "resnet56_bayesian"]:
-    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestone, gamma=gamma)
+# if args.model in ["resnet20_bayesian", "resnet32_bayesian", "resnet44_bayesian", "resnet56_bayesian"]:
+#     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestone, gamma=gamma)
 # elif args.model == "vit_timm" or args.model == "vit":
 #     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
-else:
-    raise ValueError(f"'{args.model}' is not a valid model")
+# else:
+#     raise ValueError(f"'{args.model}' is not a valid model")
 
 if args.mode == "train":
 
@@ -336,8 +330,16 @@ if args.mode == "train":
             model, test_loader, args.num_mc, criterion, epoch, device, tb_writer
         )
 
-        scheduler.step()
-        current_lr = optimizer.param_groups[0]['lr']
+        if (epoch >= 80 and epoch < 120):
+            lr = 0.1 * args.lr
+        elif (epoch >= 120 and epoch < 160):
+            lr = 0.01 * args.lr
+        elif (epoch >= 160 and epoch < 180):
+            lr = 0.001 * args.lr
+        elif (epoch >= 180):
+            lr = 0.0005 * args.lr
+
+        #current_lr = optimizer.param_groups[0]['lr']
 
         # # Record
         # history['train_loss'].append(train_loss)
@@ -347,7 +349,7 @@ if args.mode == "train":
         # history['lr'].append(current_lr)
 
         print(
-            f"Epoch [{epoch:3d}/{epochs}] | LR: {current_lr:.4f} | "
+            f"Epoch [{epoch:3d}/{epochs}] | LR: {lr:.4f} | "
             f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}% | "
             f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.2f}%"
         )
