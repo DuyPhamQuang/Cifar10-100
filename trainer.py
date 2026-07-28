@@ -78,7 +78,7 @@ def train_one_epoch_bayesian(model, train_loader, num_mc, criterion, optimizer, 
         cross_entropy_loss = criterion(output, labels)
         scaled_kl = kl / total_training_samples 
         #ELBO loss
-        loss = cross_entropy_loss + scaled_kl
+        loss = cross_entropy_loss + scaled_kl 
 
         # compute gradient and do SGD step
         loss.backward()

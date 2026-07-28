@@ -23,6 +23,8 @@ from torchvision import transforms
 from torchvision import datasets
 from torch.utils.data.sampler import SubsetRandomSampler
 from torch.utils.tensorboard import SummaryWriter
+from torchvision.utils import make_grid, save_image
+from tqdm import tqdm
 
 from models.bayesian.resnet_variational import ResNet
 from models.vit import VisionTransformer
@@ -49,7 +51,7 @@ parser.add_argument('--patch_size', default=4, type=int)
 parser.add_argument('--datadir', default='data/cifar10', type=str, help='dataset to use (cifar10 or cifar100)')
 parser.add_argument('--dataset', default='cifar10', type=str, help='dataset to use (cifar10 or cifar100)')
 
-parser.add_argument('--mode', type=str, required=True, help='train | test')
+parser.add_argument('--mode', type=str, required=True, help='train | test | reconstruct')
 parser.add_argument('--num_monte_carlo', type=int, default=20, help='number of Monte Carlo samples to be drawn during inference')
 parser.add_argument('--num_mc', type=int, default=1, help='number of Monte Carlo runs during training')
 parser.add_argument('--tensorboard', type=bool, default=True, help='use tensorboard for logging and visualization ' \
@@ -129,7 +131,7 @@ results_path = f'results/Resnet/{args.dataset}' if args.model in ["resnet20", "r
                                 else f'results/{args.model}/{args.dataset}'
 os.makedirs(results_path, exist_ok=True)
 
-checkpoint_path = os.path.join(results_path, f'best_model_{args.model}.pth')
+checkpoint_path = os.path.join(results_path, f'best_model_{args.model}_{args.dataset}.pth')
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
@@ -305,6 +307,28 @@ else:
 logger_dir = os.path.join(args.log_dir, f"{args.model}_{args.dataset}")
 tb_writer = SummaryWriter(logger_dir)
 
+def log_layer_uncertainty(model, writer, epoch):
+    for name, module in model.named_modules():
+        mu = getattr(module, "mu_kernel", None)
+        rho = getattr(module, "rho_kernel", None)
+
+        if mu is None or rho is None:
+            mu = getattr(module, "mu_weight", None)
+            rho = getattr(module, "rho_weight", None)
+
+        if mu is None or rho is None:
+            continue
+
+        mu = mu.detach()
+        sigma = torch.log1p(torch.exp(rho.detach()))
+        snr = mu.abs() / (sigma + 1e-12)
+
+        writer.add_histogram(f"{name}/mu", mu, epoch)
+        writer.add_histogram(f"{name}/sigma", sigma, epoch)
+        writer.add_histogram(f"{name}/snr", snr, epoch)
+        writer.add_scalar(f"{name}/mean_sigma", sigma.mean().item(), epoch)
+        writer.add_scalar(f"{name}/mean_snr", snr.mean().item(), epoch)
+
  
 # Scheduler
 # if args.model in ["resnet20_bayesian", "resnet32_bayesian", "resnet44_bayesian", "resnet56_bayesian"]:
@@ -354,6 +378,9 @@ if args.mode == "train":
             f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.2f}%"
         )
 
+        # per-layer weight uncertainty logging
+        log_layer_uncertainty(model, tb_writer, epoch)
+
         # # Save record to csv file
         # record_df = pd.DataFrame(history)
         # record_df.to_csv(os.path.join(results_path, f'training_history_{args.model}.csv'), index=False)
@@ -396,5 +423,94 @@ if args.mode == "test":
     model.eval()
     output, labels = evaluate_bayesian(model, test_loader, args.num_monte_carlo)
 
-    np.save(f'{results_path}/probs_cifar_mc.npy', output.data.cpu().numpy())
-    np.save(f'{results_path}/cifar_test_labels_mc.npy', labels.data.cpu().numpy())
+    np.save(f'{results_path}/probs_cifar_mc_{args.dataset}.npy', output.data.cpu().numpy())
+    np.save(f'{results_path}/cifar_test_labels_mc_{args.dataset}.npy', labels.data.cpu().numpy())
+
+if args.mode == "reconstruct":
+    print(f"Reconstructing training set from {args.dataset} based on achieved weights ...")
+
+    # Hyperparameters
+    num_candidates = 10
+    reconstruction_epochs = 5000
+    # real label
+    #_, real_label = next(iter(train_loader))
+
+
+    # Support utils function
+    @torch.no_grad()
+    def calc_model_parameters(model):
+        l = [torch.tensor(p.shape).prod() for p in model.parameters()]
+        print('Parameters per Layer:', l)
+        print('Total Parameters:', torch.tensor(l).sum().item())
+
+    # Load the best model checkpoint
+    if torch.cuda.is_available():
+        checkpoint = torch.load(checkpoint_path)
+    else:
+        checkpoint = torch.load(checkpoint_path,
+                                map_location=torch.device('cpu'))
+    model.load_state_dict(checkpoint['model_state_dict'])
+    
+    # Freeze the model
+    model.eval()
+    for p in model.parameters():
+        p.requires_grad_(False)
+
+    # Initialize random data points for reconstruction
+    x0, y0 = next(iter(train_loader))
+    print('X:', x0.shape, x0.device)
+    print('y:', y0.shape, y0.device)
+
+    n, c, h, w = x0.shape
+    x_raw = torch.randn(num_candidates, c, h, w).to(device)
+    x_raw.requires_grad_(True)
+    opt_x = torch.optim.SGD([x_raw], lr=1e-4, momentum=0.9)
+
+
+    pbar = tqdm(range(reconstruction_epochs), desc="Reconstruction Progress", unit="step")
+
+    for step in pbar:
+        opt_x.zero_grad()
+        ds_mean = x_raw.mean(dim=0, keepdims=True)
+        x_input = x_raw - ds_mean  # normalize before feeding into the model
+
+        # Multiple MC forward passes
+        probs_mc = []
+        for _ in range(args.num_monte_carlo):
+            outputs, _ = model(x_input)
+            probs_mc.append(F.softmax(outputs, dim=1))
+        probs_mc = torch.stack(probs_mc, dim=0)          # [num_mc, N, C]
+
+        # Per-candidate uncertainty: variance across MC samples, summed over classes
+        var_probs = probs_mc.var(dim=0).sum(dim=1)       # [N]
+        uncertainty_loss = var_probs.mean()
+
+        loss = uncertainty_loss
+        loss.backward()
+        opt_x.step()
+
+        # Keep pixel values in valid image range
+        with torch.no_grad():
+            x_raw.clamp_(0.0, 1.0)
+
+        pbar.set_postfix({
+            'mean_uncertainty': f'{uncertainty_loss.item():.6f}',
+            'min_uncertainty': f'{var_probs.min().item():.6f}',
+            'max_uncertainty': f'{var_probs.max().item():.6f}',
+        })
+
+        # logging with tensor
+        tb_writer.add_scalar('reconstruction/mean_uncertainty', uncertainty_loss.item(), step)
+
+        if step % 200 == 0 or step == reconstruction_epochs - 1:
+            # history["step"].append(step)
+            # history["mean_uncertainty"].append(uncertainty_loss.item())
+            # history["per_candidate_uncertainty"].append(var_probs.detach().cpu().clone())
+
+            # print(f"step {step:5d} | mean_uncertainty={uncertainty_loss.item():.6f} "
+            #       f"| min={var_probs.min().item():.6f} max={var_probs.max().item():.6f}")
+            
+            
+            grid = make_grid(x_raw.detach().cpu(), nrow=5, padding=2)
+            save_image(grid, f'{results_path}/candidates_step{step:05d}.png')
+    
