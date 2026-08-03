@@ -97,7 +97,7 @@ def train_one_epoch_bayesian(model, train_loader, num_mc, criterion, optimizer, 
         scaled_kl = kl / batch_size  # Scale KL divergence by batch size 
         sigma_reg = sigma_regularization(model, mode='neg_log_sum') / batch_size  # Scale sigma regularization by batch size
         #ELBO loss
-        loss = cross_entropy_loss + scaled_kl + sigma_reg
+        loss = cross_entropy_loss + scaled_kl + 0.001 * sigma_reg
 
         # compute gradient and do SGD step
         loss.backward()
@@ -163,7 +163,7 @@ def validate_bayesian(model, val_loader, num_mc, criterion, epoch, device, tb_wr
         scaled_kl = kl / batch_size
         sigma_reg = sigma_regularization(model, mode='neg_log_sum') / batch_size
         #ELBO loss
-        loss = cross_entropy_loss + scaled_kl + sigma_reg
+        loss = cross_entropy_loss + scaled_kl + 0.001* sigma_reg
 
         # measure accuracy and record loss
         total_loss    += loss.item() * batch_size
