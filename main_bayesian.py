@@ -383,7 +383,8 @@ if args.mode == "train":
 
         # # Save record to csv file
         # record_df = pd.DataFrame(history)
-        # record_df.to_csv(os.path.join(results_path, f'training_history_{args.model}.csv'), index=False)
+        # record_df.to_csv(os.path.join(results_path,
+        # f'training_history_{args.model}.csv'), index=False)
 
         # Save best checkpoint
         if test_acc > best_test_acc:
