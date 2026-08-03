@@ -47,6 +47,24 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device, scaler):
     avg_acc  = 100.0 * total_correct / total_samples
     return avg_loss, avg_acc
 
+def sigma_regularization(model, mode='neg_log_sum'):
+        total = 0.0
+        for name, module in model.named_modules():
+            rho = getattr(module, "rho_kernel", None)
+            if rho is None:
+                rho = getattr(module, "rho_weight", None)
+            if rho is None:
+                continue
+
+            sigma = torch.log1p(torch.exp(rho))  # softplus(rho), NOT detached
+
+            if mode == "sum":
+                total += sigma.sum()
+            elif mode == "neg_log_sum":
+                total -= torch.log(sigma + 1e-12).sum()
+
+        return total
+
 def train_one_epoch_bayesian(model, train_loader, num_mc, criterion, optimizer, epoch, device, scaler, tb_writer):
 
     total_loss    = 0.0
@@ -76,9 +94,10 @@ def train_one_epoch_bayesian(model, train_loader, num_mc, criterion, optimizer, 
         output = torch.mean(torch.stack(output_), dim=0)
         kl = torch.mean(torch.stack(kl_), dim=0)
         cross_entropy_loss = criterion(output, labels)
-        scaled_kl = kl / total_training_samples 
+        scaled_kl = kl / batch_size  # Scale KL divergence by batch size 
+        sigma_reg = sigma_regularization(model, mode='neg_log_sum') / batch_size  # Scale sigma regularization by batch size
         #ELBO loss
-        loss = cross_entropy_loss + scaled_kl 
+        loss = cross_entropy_loss + scaled_kl + sigma_reg
 
         # compute gradient and do SGD step
         loss.backward()
@@ -97,6 +116,7 @@ def train_one_epoch_bayesian(model, train_loader, num_mc, criterion, optimizer, 
         pbar.set_postfix({
             'loss': f'{train_loss:.4f}',
             'acc':  f'{train_acc:.2f}%',
+            'sigma_sum': f'{sigma_reg.item():.4f}',
             'kl_div': f'{scaled_kl.item():.4f}',
             'cross_entropy_loss': f'{cross_entropy_loss.item():.4f}'
         })
@@ -107,6 +127,7 @@ def train_one_epoch_bayesian(model, train_loader, num_mc, criterion, optimizer, 
             tb_writer.add_scalar('train/kl_div', scaled_kl.item(), epoch)
             tb_writer.add_scalar('train/elbo_loss', train_loss, epoch)
             tb_writer.add_scalar('train/accuracy', train_acc, epoch)
+            tb_writer.add_scalar('train/sigma_sum', sigma_reg.item(), epoch)
             tb_writer.flush()
 
     return train_acc, train_loss
@@ -139,9 +160,10 @@ def validate_bayesian(model, val_loader, num_mc, criterion, epoch, device, tb_wr
         output = torch.mean(torch.stack(output_), dim=0)
         kl = torch.mean(torch.stack(kl_), dim=0)
         cross_entropy_loss = criterion(output, labels)
-        scaled_kl = kl / len_testset
+        scaled_kl = kl / batch_size
+        sigma_reg = sigma_regularization(model, mode='neg_log_sum') / batch_size
         #ELBO loss
-        loss = cross_entropy_loss + scaled_kl
+        loss = cross_entropy_loss + scaled_kl + sigma_reg
 
         # measure accuracy and record loss
         total_loss    += loss.item() * batch_size
@@ -156,6 +178,7 @@ def validate_bayesian(model, val_loader, num_mc, criterion, epoch, device, tb_wr
         pbar.set_postfix({
             'loss': f'{test_loss:.4f}',
             'acc':  f'{test_acc:.2f}%',
+            'sigma_sum': f'{sigma_reg.item():.4f}',
             'kl_div': f'{scaled_kl.item():.4f}',
             'cross_entropy_loss': f'{cross_entropy_loss.item():.4f}'
         })
@@ -167,6 +190,7 @@ def validate_bayesian(model, val_loader, num_mc, criterion, epoch, device, tb_wr
             tb_writer.add_scalar('val/kl_div', scaled_kl.item(), epoch)
             tb_writer.add_scalar('val/elbo_loss', test_loss, epoch)
             tb_writer.add_scalar('val/accuracy', test_acc, epoch)
+            tb_writer.add_scalar('val/sigma_sum', sigma_reg.item(), epoch)
             tb_writer.flush()
 
     return test_acc, test_loss

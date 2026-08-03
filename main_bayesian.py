@@ -381,6 +381,7 @@ if args.mode == "train":
         # per-layer weight uncertainty logging
         log_layer_uncertainty(model, tb_writer, epoch)
 
+
         # # Save record to csv file
         # record_df = pd.DataFrame(history)
         # record_df.to_csv(os.path.join(results_path, f'training_history_{args.model}.csv'), index=False)
