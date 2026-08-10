@@ -91,11 +91,12 @@ def train_one_epoch_bayesian(model, train_loader, num_mc, criterion, optimizer, 
             #print(f"Train MC Run {mc_run+1}/{num_mc}: Output shape: {output.shape}, Output predictions: {output.argmax(dim=1)}")
 
         batch_size     = images.size(0)
+        num_batches = len(train_loader)
         output = torch.mean(torch.stack(output_), dim=0)
         kl = torch.mean(torch.stack(kl_), dim=0)
         cross_entropy_loss = criterion(output, labels)
-        scaled_kl = kl / batch_size  # Scale KL divergence by batch size 
-        sigma_reg = sigma_regularization(model, mode='neg_log_sum') / batch_size  # Scale sigma regularization by batch size
+        scaled_kl = kl / num_batches  # Scale KL divergence by batch size 
+        sigma_reg = sigma_regularization(model, mode='neg_log_sum') / num_batches  # Scale sigma regularization by batch size
         #ELBO loss
         loss = cross_entropy_loss + scaled_kl + 0.001 * sigma_reg
 
@@ -157,14 +158,15 @@ def validate_bayesian(model, val_loader, num_mc, criterion, epoch, device, tb_wr
             #print(f"Validation MC Run {mc_run+1}/{num_mc}: Output shape: {output.shape}, Output predictions: {output.argmax(dim=1)}")
 
         batch_size = images.size(0) 
+        num_batches = len(val_loader)
         output = torch.mean(torch.stack(output_), dim=0)
         kl = torch.mean(torch.stack(kl_), dim=0)
         cross_entropy_loss = criterion(output, labels)
-        scaled_kl = kl / batch_size
-        sigma_reg = sigma_regularization(model, mode='neg_log_sum') / batch_size
+        scaled_kl = kl / num_batches
+        sigma_reg = sigma_regularization(model, mode='neg_log_sum') / num_batches
         #ELBO loss
         loss = cross_entropy_loss + scaled_kl + 0.001* sigma_reg
-
+ 
         # measure accuracy and record loss
         total_loss    += loss.item() * batch_size
         _, preds       = output.max(dim=1)
