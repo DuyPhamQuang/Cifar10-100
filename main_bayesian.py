@@ -22,6 +22,7 @@ import timm.data
 from torchvision import transforms
 from torchvision import datasets
 from torch.utils.data.sampler import SubsetRandomSampler
+from torch.utils.data import DataLoader, random_split
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.utils import make_grid, save_image
 from tqdm import tqdm
@@ -33,6 +34,11 @@ from trainer import train_one_epoch, evaluate, train_one_epoch_bayesian, validat
 from utils import save_checkpoint, load_checkpoint, plot_history, plot_accuracy
 
 from bayesian_torch.utils.util import get_rho
+
+import optuna
+from optuna.samplers import TPESampler
+from optuna.pruners import MedianPruner
+from optuna.visualization import plot_pareto_front
 
 # parsers
 parser = argparse.ArgumentParser(description='CIFAR10/100 Training')
@@ -51,7 +57,7 @@ parser.add_argument('--patch_size', default=4, type=int)
 parser.add_argument('--datadir', default='data/cifar10', type=str, help='dataset to use (cifar10 or cifar100)')
 parser.add_argument('--dataset', default='cifar10', type=str, help='dataset to use (cifar10 or cifar100)')
 
-parser.add_argument('--mode', type=str, required=True, help='train | test | reconstruct')
+parser.add_argument('--mode', type=str, required=True, help='train | test | HPs_tuning | reconstruct | measure_uncertainty')
 parser.add_argument('--num_monte_carlo', type=int, default=20, help='number of Monte Carlo samples to be drawn during inference')
 parser.add_argument('--num_mc', type=int, default=1, help='number of Monte Carlo runs during training')
 parser.add_argument('--tensorboard', type=bool, default=True, help='use tensorboard for logging and visualization ' \
@@ -74,57 +80,7 @@ lr = args.lr
 momentum = args.momentum
 weight_decay = args.weight_decay
 milestone = args.milestone
-gamma = args.gamma
-
-# if args.model == "vit_timm" and args.dataset == "cifar10":   
-#     print("For fine-tuning ViT on Cifar10, these default hyperparameters will be used:")
-#     lr = 1e-4
-#     weight_decay = 5e-4
-#     epochs = 12
-#     batch_size = 64
-#     print(f"Learning Rate for ViT_Timm: {lr}\n")
-#     print(f"Weight Decay for ViT_Timm: {weight_decay}\n")
-#     print(f"Epochs for ViT_Timm: {epochs}\n")
-#     print(f"Batch Size for ViT_Timm: {batch_size}\n")
-
-# if args.model == "vit_timm" and args.dataset == "cifar100":
-#     print("For fine-tuning ViT on Cifar100, these default hyperparameters will be used:")
-#     lr = 1e-4
-#     weight_decay = 1e-3
-#     epochs = 20
-#     batch_size = 64
-#     print(f"Learning Rate for ViT_Timm: {lr}\n")
-#     print(f"Weight Decay for ViT_Timm: {weight_decay}\n")
-#     print(f"Epochs for ViT_Timm: {epochs}\n")
-#     print(f"Batch Size for ViT_Timm: {batch_size}\n")
-
-# if args.model == "vit" and args.dataset == "cifar10":
-#     print("For fine-tuning ViT on Cifar10, these default hyperparameters will be used:")
-#     input_channels = 3
-#     patch_size = 4
-#     embedding_dim = 768 
-#     num_heads = 12
-#     mlp_hidden_dim = 3072
-#     num_blocks = 12
-#     drop_out=0.1
-#     lr = 3e-4
-#     weight_decay = 5e-5
-#     epochs = 200
-#     batch_size = 128
-
-# if args.model == "vit" and args.dataset == "cifar100":
-#     print("For fine-tuning ViT on Cifar100, these default hyperparameters will be used:")
-#     input_channels = 3
-#     patch_size = 4
-#     embedding_dim = 768 
-#     num_heads = 12
-#     mlp_hidden_dim = 3072
-#     num_blocks = 12
-#     drop_out=0.1
-#     lr = 3e-4
-#     weight_decay = 5e-4
-#     epochs = 200
-#     batch_size = 128
+#gamma = args.gamma
 
 # Paths
 results_path = f'results/Resnet/{args.dataset}' if args.model in ["resnet20", "resnet32", "resnet44", "resnet56"] \
@@ -228,13 +184,6 @@ train_loader, test_loader = get_data_loaders(datadir,
                                              num_workers=4,
                                              pin_memory=True)
 
-# # Set up class names based on the dataset
-# if args.dataset == 'cifar10':
-#     classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
-# else:
-#     # CIFAR100 has 100 classes, so we don't list them all here
-#     classes = None
-
 
 # Model factory..
 print('==> Building model..')
@@ -250,24 +199,6 @@ elif args.model=='resnet44_bayesian':
 elif args.model=='resnet56_bayesian':
     model = ResNet(n=9, shortcuts=True).to(device)
     print(f"Using ResNet-56_bayesian")
-# elif args.model=="vit_timm":
-#     model = timm.create_model("vit_base_patch16_224", pretrained=True)
-#     model.head = nn.Linear(model.head.in_features, num_classes)
-#     model = model.to(device)
-#     print(f"Using ViT (timm pretrained on ImageNet)")
-# elif args.model=="vit":
-#     model = VisionTransformer(
-#         input_channels=input_channels,
-#         embedding_dim=embedding_dim,
-#         patch_size=patch_size,
-#         image_size=image_size,
-#         num_heads=num_heads,
-#         mlp_hidden_dim=mlp_hidden_dim,
-#         num_blocks=num_blocks,
-#         num_classes=num_classes,
-#         dropout=drop_out
-#     ).to(device)
-#     print(f"Using ViT_base (from scratch)")
 else:
     raise ValueError(f"'{args.model}' is not a valid model")
 
@@ -295,18 +226,25 @@ criterion = nn.CrossEntropyLoss() # Already includes softmax, so outputs can be 
 # Optimizer
 if args.model in ["resnet20_bayesian", "resnet32_bayesian", "resnet44_bayesian", "resnet56_bayesian"]:
     optimizer = torch.optim.Adam(model.parameters(), lr)
-# elif args.model == "vit_timm" or args.model == "vit":
-#     optimizer = optim.Adam(
-#         model.parameters(),
-#         lr = lr,
-#         weight_decay = weight_decay
-#     )
 else:
     raise ValueError(f"'{args.model}' is not a valid model")
 
 logger_dir = os.path.join(args.log_dir, f"{args.model}_{args.dataset}")
 tb_writer = SummaryWriter(logger_dir)
 
+@torch.no_grad()
+def get_mean_sigma(model):
+    sigmas = []
+    for _, module in model.named_modules():
+        rho = getattr(module, "rho_kernel", None)
+        if rho is None:
+            rho = getattr(module, "rho_weight", None)
+        if rho is None:
+            continue
+        sigmas.append(torch.log1p(torch.exp(rho.detach()) + 1e-12).flatten())
+    return torch.cat(sigmas).mean().item() if sigmas else 0.0
+
+@torch.no_grad()
 def log_layer_uncertainty(model, writer, epoch):
     for name, module in model.named_modules():
         mu = getattr(module, "mu_kernel", None)
@@ -412,6 +350,161 @@ if args.mode == "train":
 #     dataset_name=args.dataset
 # )
 
+if args.mode == "HPs_tuning":
+    from trainer import train_one_epoch_bayesian_with_HPs, validate_bayesian_for_tuning_process
+
+    VAL_SIZE = 5000
+    NUM_MC_EVAL = 10  
+    HPO_EPOCHS = 150           # reduced-epoch proxy budget per Optuna trial
+    FULL_EPOCHS = 300         # final full-length training run
+    N_TRIALS = 20
+    seed = 42
+
+    # --------------------------------------------------------------------------
+    # Data: train / val split
+    # --------------------------------------------------------------------------
+    train_dataset = datasets.CIFAR10(root=datadir, train=True, download=True, transform=train_transform) if args.dataset == 'cifar10' \
+        else datasets.CIFAR100(root=datadir, train=True, download=True, transform=train_transform)
+
+    validation_dataset = datasets.CIFAR10(root=datadir, train=True, download=True, transform=test_transform) if args.dataset == 'cifar10' \
+        else datasets.CIFAR100(root=datadir, train=True, download=True, transform=test_transform)
+
+    n_total = len(validation_dataset)
+    n_train = n_total - VAL_SIZE
+    generator = torch.Generator().manual_seed(seed)
+    train_idx, val_idx = random_split(range(n_total), [n_train, VAL_SIZE], generator=generator)
+
+    train_subset = torch.utils.data.Subset(train_dataset, train_idx.indices)
+    val_subset = torch.utils.data.Subset(validation_dataset, val_idx.indices)
+
+    train_loader_2 = DataLoader(train_subset, batch_size=batch_size, shuffle=True,
+                               num_workers=4)
+    val_loader = DataLoader(val_subset, batch_size=batch_size, shuffle=False, num_workers=2)
+
+    # --------------------------------------------------------------------------
+    # Optuna multi-objective search: maximize (val_acc, mean_sigma)
+    # --------------------------------------------------------------------------
+    def objective(trial, model, optimizer, train_loader, val_loader):
+        beta = trial.suggest_float("beta", 1e-3, 1.0, log=True)
+        lambda_sigma = trial.suggest_float("lambda_sigma", 1e-5, 1e-1, log=True)
+
+        for epoch in range(HPO_EPOCHS):
+            train_one_epoch_bayesian_with_HPs(model, train_loader, num_mc=1, criterion=criterion, optimizer=optimizer, beta=beta, lambda_sigma=lambda_sigma, epoch=epoch, device=device)
+            val_acc = validate_bayesian_for_tuning_process(model, val_loader, num_mc=3, criterion=criterion, epoch=epoch, device=device)  # cheap MC count while pruning
+            trial.report(val_acc, epoch)
+            if trial.should_prune():
+                raise optuna.TrialPruned()
+
+        final_val_acc = validate_bayesian_for_tuning_process(model, val_loader, num_mc=NUM_MC_EVAL, criterion=criterion, epoch=HPO_EPOCHS, device=device)
+        mean_sigma = get_mean_sigma(model)
+        #trial.set_user_attr("mean_sigma_raw", mean_sigma)
+        return final_val_acc, mean_sigma
+
+
+    def run_hpo(train_loader, val_loader):
+        sampler = TPESampler(n_startup_trials=5)
+        pruner = MedianPruner(n_startup_trials=5, n_warmup_steps=10)
+
+        STORAGE_PATH = f"sqlite:///optuna_studies/bayesian_hpo_{args.model}_{args.dataset}.db"
+        study = optuna.create_study(
+            directions=["maximize", "maximize"], sampler=sampler, pruner=pruner,
+            storage=STORAGE_PATH,
+            study_name=f"bayesian_hpo_{args.model}_{args.dataset}",
+            load_if_exists=True
+        )
+        study.optimize(lambda t: objective(t, model, optimizer, train_loader, val_loader), n_trials=N_TRIALS)
+        return study
+
+
+    # --------------------------------------------------------------------------
+    # Pareto front plot + pick a configuration
+    # --------------------------------------------------------------------------
+    def save_pareto_plot(study, out_html="pareto_front.html", out_png="pareto_front.png"):
+        fig = plot_pareto_front(study, target_names=["Val Accuracy", "Mean Sigma"])
+        fig.write_html(out_html)
+
+        fig.write_image(out_png)  # requires `kaleido` installed
+
+
+    def pick_config(study, min_accuracy=None):
+        candidates = study.best_trials
+        if min_accuracy is not None:
+            filtered = [t for t in candidates if t.values[0] >= min_accuracy]
+            candidates = filtered if filtered else candidates
+        best = max(candidates, key=lambda t: t.values[1])  # highest mean_sigma among candidates
+        return best.params
+
+
+    # --------------------------------------------------------------------------
+    # Final full-length training run with chosen hyperparameters on the pre-splitting
+    # training dataset
+    # --------------------------------------------------------------------------
+    def final_training(params, model, optimizer, train_loader, test_loader,
+                    epochs=FULL_EPOCHS, tb_writer=None):
+        beta = params["beta"]
+        lambda_sigma = params["lambda_sigma"]
+
+        for epoch in range(epochs):
+            train_loss, train_acc = train_one_epoch_bayesian_with_HPs(model, train_loader, num_mc=1, criterion=criterion, optimizer=optimizer, beta=beta, lambda_sigma=lambda_sigma, epoch=epoch, device=device)
+            test_acc = validate_bayesian_for_tuning_process(model, test_loader, num_mc=NUM_MC_EVAL, criterion=criterion, epoch=epoch, device=device)
+            mean_sigma = get_mean_sigma(model)
+
+            tb_writer.add_scalar("train_with_HPs/loss", train_loss, epoch)
+            tb_writer.add_scalar("train_with_HPs/accuracy", train_acc, epoch)
+            tb_writer.add_scalar("val_with_HPs/accuracy", test_acc, epoch)
+            tb_writer.add_scalar("val_with_HPs/mean_sigma", mean_sigma, epoch)
+
+            if epoch % 5 == 0 or epoch == epochs - 1:
+                log_layer_uncertainty(model, tb_writer, epoch)
+
+            print(f"Epoch {epoch+1}/{epochs} | train_loss={train_loss:.4f} "
+                f"train_acc={train_acc:.2f}% val_acc={test_acc:.2f}% mean_sigma={mean_sigma:.4f}")
+
+            # Save best checkpoint
+            if test_acc > best_test_acc:
+                best_test_acc = test_acc
+                save_checkpoint(
+                    state={
+                        'epoch': epoch,
+                        'model_state_dict': model.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'test_acc': test_acc,
+                    },
+                    save_path=checkpoint_path
+                )
+
+        print(f"\nTraining complete.")
+        print(f"Best test accuracy : {best_test_acc:.2f}%")
+        print(f"Best checkpoint    : {checkpoint_path}\n")
+
+        #test_acc = validate_bayesian_for_tuning_process(model, test_loader, num_mc=NUM_MC_EVAL, criterion=criterion, epoch=epochs, device=device)
+        #print(f"\nFinal held-out TEST accuracy: {test_acc:.2f}%")
+        #tb_writer.add_scalar("test_with_HPs/accuracy", test_acc, epochs)
+        tb_writer.flush()
+        tb_writer.close()
+        #return model, best_test_acc
+
+
+    # --------------------------------------------------------------------------
+    # Orchestration
+    # --------------------------------------------------------------------------
+    print("Running multi-objective Optuna search (val_acc, mean_sigma)...")
+    study = run_hpo(train_loader_2, val_loader)
+
+    print(f"\nPareto-optimal trials ({len(study.best_trials)}):")
+    for t in study.best_trials:
+        print(f"  beta={t.params['beta']:.5f}  lambda_sigma={t.params['lambda_sigma']:.6f} "
+            f"-> val_acc={t.values[0]:.2f}%  mean_sigma={t.values[1]:.4f}")
+
+    out_html = os.path.join(results_path, 'pareto_front.html')
+    out_png = os.path.join(results_path, 'pareto_front.png')
+    save_pareto_plot(study, out_html, out_png)
+
+    chosen_params = pick_config(study, min_accuracy=79)  # adjust accuracy floor as needed
+    print(f"\nChosen configuration: {chosen_params}")
+
+    final_training(chosen_params, model, optimizer, train_loader, test_loader, epochs=FULL_EPOCHS, tb_writer=tb_writer)
+
 if args.mode == "test":
     # Evaluate the best model on the test set
     print(f"Evaluating the best model on the test set ...")
@@ -427,6 +520,87 @@ if args.mode == "test":
 
     np.save(f'{results_path}/probs_cifar_mc_{args.dataset}.npy', output.data.cpu().numpy())
     np.save(f'{results_path}/cifar_test_labels_mc_{args.dataset}.npy', labels.data.cpu().numpy())
+
+if args.mode == "measure_uncertainty":
+    # Load the best model checkpoint
+    if torch.cuda.is_available():
+        checkpoint = torch.load(checkpoint_path)
+    else:
+        checkpoint = torch.load(checkpoint_path,
+                                map_location=torch.device('cpu'))
+    model.load_state_dict(checkpoint['model_state_dict'])
+    
+    # Freeze the model
+    model.eval()
+    for p in model.parameters():
+        p.requires_grad_(False)
+
+    ### Measure on the training set
+    print(f"Measuring uncertainty on the training set ...")
+
+    batch = 0
+    batch_limit = 20
+    for images, labels in train_loader:
+        images = images.to(device)
+        labels = labels.to(device)
+
+        # Multiple MC forward passes
+        probs_mc = []
+        for _ in range(args.num_monte_carlo):
+            outputs, _ = model(images)
+            probs_mc.append(F.softmax(outputs, dim=1))
+        probs_mc = torch.stack(probs_mc, dim=0)          # [num_mc, N, C]
+
+        # Per-candidate uncertainty: variance across MC samples, summed over classes
+        var_probs = probs_mc.var(dim=0).sum(dim=1)       # [N]
+        uncertainty_loss = var_probs.mean()
+
+        batch += 1
+        print(f"batch {batch}  | mean_uncertainty={uncertainty_loss.item():.6f}")
+
+        # logging with tensorboard
+        if tb_writer is not None:
+            tb_writer.add_scalar('uncertainty/mean_uncertainty_training_set', uncertainty_loss.item(), batch)
+
+        if batch >= batch_limit:
+            break
+
+    ### Measure uncertainty on random inputs
+    print(f"Measuring uncertainty on random inputs ...")
+
+    num_candidates = 64
+
+    # Initialize random data points for reconstruction
+    x0, y0 = next(iter(train_loader))
+    print('X:', x0.shape, x0.device)
+    print('y:', y0.shape, y0.device)
+
+    n, c, h, w = x0.shape
+    x_raw = torch.rand(num_candidates, c, h, w).to(device)
+
+    # Apply transform
+    mean_t = torch.tensor(mean).view(1, c, 1, 1)
+    std_t = torch.tensor(std).view(1, c, 1, 1)
+
+    x_raw_transform = (x_raw - mean_t) / std_t
+
+    # Multiple MC forward passes
+    probs_mc = []
+    for _ in range(args.num_monte_carlo):
+        outputs, _ = model(x_raw_transform)
+        probs_mc.append(F.softmax(outputs, dim=1))
+    probs_mc = torch.stack(probs_mc, dim=0)          # [num_mc, N, C]
+
+    # Per-candidate uncertainty: variance across MC samples, summed over classes
+    var_probs = probs_mc.var(dim=0).sum(dim=1)       # [N]
+    uncertainty_loss = var_probs.mean()
+
+    print(f"random batch of images  | mean_uncertainty={uncertainty_loss.item():.6f}")
+
+    # logging with tensorboard
+    if tb_writer is not None:
+        tb_writer.add_scalar('uncertainty/mean_uncertainty_random_images', uncertainty_loss.item(), batch)
+
 
 if args.mode == "reconstruct":
     print(f"Reconstructing training set from {args.dataset} based on achieved weights ...")
@@ -464,17 +638,21 @@ if args.mode == "reconstruct":
     print('y:', y0.shape, y0.device)
 
     n, c, h, w = x0.shape
-    x_raw = torch.randn(num_candidates, c, h, w).to(device)
+    x_raw = torch.rand(num_candidates, c, h, w).to(device)
     x_raw.requires_grad_(True)
     opt_x = torch.optim.SGD([x_raw], lr=1e-4, momentum=0.9)
 
+    # For the reconstruction, we will use the same normalization as used during training
+    mean_t = torch.tensor(mean).view(1, c, 1, 1)
+    std_t = torch.tensor(std).view(1, c, 1, 1)
 
     pbar = tqdm(range(reconstruction_epochs), desc="Reconstruction Progress", unit="step")
 
     for step in pbar:
         opt_x.zero_grad()
-        ds_mean = x_raw.mean(dim=0, keepdims=True)
-        x_input = x_raw - ds_mean  # normalize before feeding into the model
+
+        # Apply transform
+        x_input = (x_raw - mean_t) / std_t
 
         # Multiple MC forward passes
         probs_mc = []
@@ -502,7 +680,8 @@ if args.mode == "reconstruct":
         })
 
         # logging with tensor
-        tb_writer.add_scalar('reconstruction/mean_uncertainty', uncertainty_loss.item(), step)
+        if tb_writer is not None:
+            tb_writer.add_scalar('reconstruction/mean_uncertainty', uncertainty_loss.item(), step)
 
         if step % 200 == 0 or step == reconstruction_epochs - 1:
             # history["step"].append(step)
