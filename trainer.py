@@ -2,6 +2,7 @@ import torch
 from torch.cuda.amp import GradScaler, autocast
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+import torch.nn.functional as F
 #from utils import accuracy
 
 
@@ -133,6 +134,55 @@ def train_one_epoch_bayesian(model, train_loader, num_mc, criterion, optimizer, 
 
     return train_acc, train_loss
 
+def train_one_epoch_bayesian_with_HPs(model, train_loader, num_mc, criterion, optimizer, beta, lambda_sigma, epoch, device):
+
+    total_loss    = 0.0
+    total_correct = 0
+    total_samples = 0
+
+    # switch to train mode
+    model.train()
+
+    for images, labels in train_loader:
+        images = images.to(device)
+        labels = labels.to(device)
+
+        optimizer.zero_grad()
+        
+        # compute output
+        output_ = []
+        kl_ = []
+        for mc_run in range(num_mc):
+            output, kl = model(images)
+            output_.append(output)
+            kl_.append(kl)
+            #print(f"Train MC Run {mc_run+1}/{num_mc}: Output shape: {output.shape}, Output predictions: {output.argmax(dim=1)}")
+
+        batch_size     = images.size(0)
+        num_batches = len(train_loader)
+        output = torch.mean(torch.stack(output_), dim=0)
+        kl = torch.mean(torch.stack(kl_), dim=0)
+        cross_entropy_loss = criterion(output, labels)
+        scaled_kl = kl / num_batches  # Scale KL divergence by batch size 
+        sigma_reg = sigma_regularization(model, mode='neg_log_sum') / num_batches  # Scale sigma regularization by batch size
+        #ELBO loss
+        loss = cross_entropy_loss + beta * scaled_kl + lambda_sigma * sigma_reg
+
+        # compute gradient and do SGD step
+        loss.backward()
+        optimizer.step()
+
+        # measure accuracy and record loss
+        total_loss    += loss.item() * batch_size
+        _, preds       = output.max(dim=1)
+        total_correct += preds.eq(labels).sum().item()
+        total_samples += batch_size
+
+        train_loss = total_loss / total_samples
+        train_acc = 100.0 * total_correct / total_samples
+
+    return train_acc, train_loss
+
 @torch.no_grad()
 def validate_bayesian(model, val_loader, num_mc, criterion, epoch, device, tb_writer):
 
@@ -196,6 +246,35 @@ def validate_bayesian(model, val_loader, num_mc, criterion, epoch, device, tb_wr
             tb_writer.flush()
 
     return test_acc, test_loss
+
+@torch.no_grad()
+def validate_bayesian_for_tuning_process(model, val_loader, num_mc_eval, criterion, epoch, device):    
+    # switch to evaluate mode
+    model.eval()
+    #pbar = tqdm(val_loader, desc="Validate", leave=False, dynamic_ncols=True)
+    total_correct, total_samples = 0, 0
+    for images, labels in val_loader:
+        images = images.to(device)
+        labels = labels.to(device)
+
+        # compute output
+        output_ = []
+        for mc_run in range(num_mc_eval):
+            output = model(images)
+            output_.append(F.softmax(output, dim=1))
+            #print(f"Validation MC Run {mc_run+1}/{num_mc}: Output shape: {output.shape}, Output predictions: {output.argmax(dim=1)}")
+
+        output = torch.mean(torch.stack(output_), dim=0)
+
+        # measure accuracy
+        batch_size = images.size(0)
+        _, preds       = output.max(dim=1)
+        total_correct += preds.eq(labels).sum().item()
+        total_samples += batch_size
+
+        val_acc = 100.0 * total_correct / total_samples
+
+    return val_acc
 
 @torch.no_grad()
 def evaluate(model, test_loader, criterion, device):
