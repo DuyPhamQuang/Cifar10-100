@@ -567,7 +567,7 @@ if args.mode == "measure_uncertainty":
     ### Measure uncertainty on random inputs
     print(f"Measuring uncertainty on random inputs ...")
 
-    num_candidates = 64
+    num_candidates = 1
 
     # Initialize random data points for reconstruction
     x0, y0 = next(iter(train_loader))
@@ -605,8 +605,8 @@ if args.mode == "reconstruct":
     print(f"Reconstructing training set from {args.dataset} based on achieved weights ...")
 
     # Hyperparameters
-    num_candidates = 10
-    reconstruction_epochs = 5000
+    num_candidates = 1
+    reconstruction_epochs = 10000
     # real label
     #_, real_label = next(iter(train_loader))
 
@@ -692,5 +692,4 @@ if args.mode == "reconstruct":
             
             
             grid = make_grid(x_raw.detach().cpu(), nrow=5, padding=2)
-            save_image(grid, f'{results_path}/candidates_step{step:05d}.png')
-    
+            save_image(grid, f'{results_path}/candidates_step{step:05d}.png')    
