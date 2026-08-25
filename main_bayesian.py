@@ -355,9 +355,9 @@ if args.mode == "HPs_tuning":
 
     VAL_SIZE = 5000
     NUM_MC_EVAL = 10  
-    HPO_EPOCHS = 150           # reduced-epoch proxy budget per Optuna trial
-    FULL_EPOCHS = 300         # final full-length training run
-    N_TRIALS = 20
+    HPO_EPOCHS = 130           # reduced-epoch proxy budget per Optuna trial
+    FULL_EPOCHS = 500         # final full-length training run
+    N_TRIALS = 100
     seed = 42
 
     # --------------------------------------------------------------------------
@@ -384,35 +384,49 @@ if args.mode == "HPs_tuning":
     # --------------------------------------------------------------------------
     # Optuna multi-objective search: maximize (val_acc, mean_sigma)
     # --------------------------------------------------------------------------
-    def objective(trial, model, optimizer, train_loader, val_loader):
+    def objective(trial, train_loader, val_loader):
         beta = trial.suggest_float("beta", 1e-3, 1.0, log=True)
         lambda_sigma = trial.suggest_float("lambda_sigma", 1e-5, 1e-1, log=True)
 
+        if args.model=='resnet20_bayesian':
+            model = ResNet(n=3, shortcuts=True).to(device)
+        elif args.model=='resnet32_bayesian':
+            model = ResNet(n=5, shortcuts=True).to(device)
+        elif args.model=='resnet44_bayesian':
+            model = ResNet(n=7, shortcuts=True).to(device)
+        elif args.model=='resnet56_bayesian':
+            model = ResNet(n=9, shortcuts=True).to(device)
+        else:
+            raise ValueError(f"'{args.model}' is not a valid model")
+    
+        optimizer = torch.optim.Adam(model.parameters(), lr)
+
         for epoch in range(HPO_EPOCHS):
             train_one_epoch_bayesian_with_HPs(model, train_loader, num_mc=1, criterion=criterion, optimizer=optimizer, beta=beta, lambda_sigma=lambda_sigma, epoch=epoch, device=device)
-            val_acc = validate_bayesian_for_tuning_process(model, val_loader, num_mc=3, criterion=criterion, epoch=epoch, device=device)  # cheap MC count while pruning
-            trial.report(val_acc, epoch)
-            if trial.should_prune():
-                raise optuna.TrialPruned()
+            #val_acc = validate_bayesian_for_tuning_process(model, val_loader, num_mc=3, criterion=criterion, epoch=epoch, device=device)  # cheap MC count while pruning
+            # trial.report(val_acc, epoch)
+            # if trial.should_prune():
+            #     raise optuna.TrialPruned()
 
         final_val_acc = validate_bayesian_for_tuning_process(model, val_loader, num_mc=NUM_MC_EVAL, criterion=criterion, epoch=HPO_EPOCHS, device=device)
         mean_sigma = get_mean_sigma(model)
+        print(f'\nTrial_{trial} | val_acc={final_val_acc:.2f}% mean_sigma={mean_sigma:.4f}')
         #trial.set_user_attr("mean_sigma_raw", mean_sigma)
         return final_val_acc, mean_sigma
 
 
     def run_hpo(train_loader, val_loader):
         sampler = TPESampler(n_startup_trials=5)
-        pruner = MedianPruner(n_startup_trials=5, n_warmup_steps=10)
+        #pruner = MedianPruner(n_startup_trials=5, n_warmup_steps=10)
 
         STORAGE_PATH = f"sqlite:///optuna_studies/bayesian_hpo_{args.model}_{args.dataset}.db"
         study = optuna.create_study(
-            directions=["maximize", "maximize"], sampler=sampler, pruner=pruner,
+            directions=["maximize", "maximize"], sampler=sampler,
             storage=STORAGE_PATH,
             study_name=f"bayesian_hpo_{args.model}_{args.dataset}",
             load_if_exists=True
         )
-        study.optimize(lambda t: objective(t, model, optimizer, train_loader, val_loader), n_trials=N_TRIALS)
+        study.optimize(lambda t: objective(t, train_loader, val_loader), n_trials=N_TRIALS)
         return study
 
 
@@ -439,13 +453,29 @@ if args.mode == "HPs_tuning":
     # Final full-length training run with chosen hyperparameters on the pre-splitting
     # training dataset
     # --------------------------------------------------------------------------
-    def final_training(params, model, optimizer, train_loader, test_loader,
+    def final_training(params, train_loader, test_loader,
                     epochs=FULL_EPOCHS, tb_writer=None):
         beta = params["beta"]
         lambda_sigma = params["lambda_sigma"]
 
+        best_test_acc = 0.0
+        best_mean_sigma = 0.0
+
+        if args.model=='resnet20_bayesian':
+            model = ResNet(n=3, shortcuts=True).to(device)
+        elif args.model=='resnet32_bayesian':   
+            model = ResNet(n=5, shortcuts=True).to(device)
+        elif args.model=='resnet44_bayesian':
+            model = ResNet(n=7, shortcuts=True).to(device)
+        elif args.model=='resnet56_bayesian':   
+            model = ResNet(n=9, shortcuts=True).to(device)
+        else:
+            raise ValueError(f"'{args.model}' is not a valid model")
+        
+        optimizer = torch.optim.Adam(model.parameters(), lr)
+
         for epoch in range(epochs):
-            train_loss, train_acc = train_one_epoch_bayesian_with_HPs(model, train_loader, num_mc=1, criterion=criterion, optimizer=optimizer, beta=beta, lambda_sigma=lambda_sigma, epoch=epoch, device=device)
+            train_acc, train_loss = train_one_epoch_bayesian_with_HPs(model, train_loader, num_mc=1, criterion=criterion, optimizer=optimizer, beta=beta, lambda_sigma=lambda_sigma, epoch=epoch, device=device)
             test_acc = validate_bayesian_for_tuning_process(model, test_loader, num_mc=NUM_MC_EVAL, criterion=criterion, epoch=epoch, device=device)
             mean_sigma = get_mean_sigma(model)
 
@@ -461,20 +491,21 @@ if args.mode == "HPs_tuning":
                 f"train_acc={train_acc:.2f}% val_acc={test_acc:.2f}% mean_sigma={mean_sigma:.4f}")
 
             # Save best checkpoint
-            if test_acc > best_test_acc:
-                best_test_acc = test_acc
+            if mean_sigma > best_mean_sigma:
+                best_mean_sigma = mean_sigma
                 save_checkpoint(
                     state={
                         'epoch': epoch,
                         'model_state_dict': model.state_dict(),
                         'optimizer_state_dict': optimizer.state_dict(),
                         'test_acc': test_acc,
+                        'mean_sigma': mean_sigma
                     },
                     save_path=checkpoint_path
                 )
 
         print(f"\nTraining complete.")
-        print(f"Best test accuracy : {best_test_acc:.2f}%")
+        print(f"Best mean sigma : {best_mean_sigma:.4f}")
         print(f"Best checkpoint    : {checkpoint_path}\n")
 
         #test_acc = validate_bayesian_for_tuning_process(model, test_loader, num_mc=NUM_MC_EVAL, criterion=criterion, epoch=epochs, device=device)
@@ -488,8 +519,13 @@ if args.mode == "HPs_tuning":
     # --------------------------------------------------------------------------
     # Orchestration
     # --------------------------------------------------------------------------
-    print("Running multi-objective Optuna search (val_acc, mean_sigma)...")
-    study = run_hpo(train_loader_2, val_loader)
+    #print("Running multi-objective Optuna search (val_acc, mean_sigma)...")
+    #study = run_hpo(train_loader_2, val_loader)
+
+    study = optuna.load_study(
+        study_name=f"bayesian_hpo_{args.model}_{args.dataset}",
+        storage=f"sqlite:///optuna_studies/bayesian_hpo_{args.model}_{args.dataset}.db"
+    )
 
     print(f"\nPareto-optimal trials ({len(study.best_trials)}):")
     for t in study.best_trials:
@@ -500,10 +536,13 @@ if args.mode == "HPs_tuning":
     out_png = os.path.join(results_path, 'pareto_front.png')
     save_pareto_plot(study, out_html, out_png)
 
-    chosen_params = pick_config(study, min_accuracy=79)  # adjust accuracy floor as needed
-    print(f"\nChosen configuration: {chosen_params}")
+    chosen_params = pick_config(study, min_accuracy=80)  # adjust accuracy floor as needed
+    corresponding_results = [t for t in study.best_trials if t.params == chosen_params][0].values
+    print(f"\nChosen configuration: beta={chosen_params['beta']:.5f}, lambda_sigma={chosen_params['lambda_sigma']:.6f} "
+          f"-> val_acc={corresponding_results[0]:.2f}%  mean_sigma={corresponding_results[1]:.4f}")
 
-    final_training(chosen_params, model, optimizer, train_loader, test_loader, epochs=FULL_EPOCHS, tb_writer=tb_writer)
+    print(f"\n Begin the final training process on the full training dataset:")
+    final_training(chosen_params, train_loader, test_loader, epochs=FULL_EPOCHS, tb_writer=tb_writer)
 
 if args.mode == "test":
     # Evaluate the best model on the test set
