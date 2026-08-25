@@ -248,7 +248,7 @@ def validate_bayesian(model, val_loader, num_mc, criterion, epoch, device, tb_wr
     return test_acc, test_loss
 
 @torch.no_grad()
-def validate_bayesian_for_tuning_process(model, val_loader, num_mc_eval, criterion, epoch, device):    
+def validate_bayesian_for_tuning_process(model, val_loader, num_mc, criterion, epoch, device):    
     # switch to evaluate mode
     model.eval()
     #pbar = tqdm(val_loader, desc="Validate", leave=False, dynamic_ncols=True)
@@ -259,8 +259,8 @@ def validate_bayesian_for_tuning_process(model, val_loader, num_mc_eval, criteri
 
         # compute output
         output_ = []
-        for mc_run in range(num_mc_eval):
-            output = model(images)
+        for mc_run in range(num_mc):
+            output, _ = model(images)
             output_.append(F.softmax(output, dim=1))
             #print(f"Validation MC Run {mc_run+1}/{num_mc}: Output shape: {output.shape}, Output predictions: {output.argmax(dim=1)}")
 

@@ -16,6 +16,7 @@ def save_checkpoint(state, save_path):
             'model_state_dict':     model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'test_acc':             float,
+            'mean_sigma':           float
         }
 
     Parameters
@@ -26,7 +27,7 @@ def save_checkpoint(state, save_path):
     os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else '.', exist_ok=True)
     torch.save(state, save_path)
     print(f" Checkpoint saved → {save_path}  (epoch {state['epoch']}, "
-          f"test acc {state['test_acc']:.2f}%)")
+          f"test acc {state['test_acc']:.2f}%, mean sigma {state['mean_sigma']:.4f})")
 
 
 def load_checkpoint(model, optimizer, load_path, device):
@@ -45,6 +46,7 @@ def load_checkpoint(model, optimizer, load_path, device):
     -------
     start_epoch : int    — the epoch to resume from (saved epoch + 1)
     best_acc    : float  — best test accuracy recorded in the checkpoint
+    best_mean_sigma : float  — best mean sigma recorded in the checkpoint
     """
     if not os.path.isfile(load_path):
         raise FileNotFoundError(f"No checkpoint found at '{load_path}'")
@@ -58,10 +60,10 @@ def load_checkpoint(model, optimizer, load_path, device):
 
     start_epoch = checkpoint['epoch'] + 1
     best_acc    = checkpoint.get('test_acc', 0.0)
-
+    best_mean_sigma = checkpoint.get('mean_sigma', 0.0)
     print(f"  ✓ Checkpoint loaded ← {load_path}  "
-          f"(resuming from epoch {start_epoch}, best acc {best_acc:.2f}%)")
-    return start_epoch, best_acc
+          f"(resuming from epoch {start_epoch}, best acc {best_acc:.2f}%, best mean sigma {best_mean_sigma:.4f})")
+    return start_epoch, best_acc, best_mean_sigma
 
 
 
